@@ -10,7 +10,3 @@ __pycache__/
 
 # Env / secrets
 .env
-
-# Excluded from public repo
-.claude/
-specs/
