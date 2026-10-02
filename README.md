@@ -62,8 +62,9 @@ Two independent tracks cover the same concepts — pick one and install only its
 - **jq**: `brew install jq`
 
 **Notebook track** (`notebooks/lakebase_lab.py`)
-- **Databricks SDK** ≥ 0.81.0 and **Python** ≥ 3.10 with `psycopg[binary]` + `sqlalchemy`
-  (provided by the Databricks serverless notebook runtime)
+- **Databricks SDK** ≥ 0.81.0 and **Python** ≥ 3.10 with `psycopg` + `sqlalchemy`
+  (installed by the notebook, which also downloads the `libpq` client library that psycopg
+  uses; it avoids `psycopg[binary]`, whose bundled OpenSSL aborts on some serverless machines)
 
 **Testing (either track)**
 - **Python** ≥ 3.10 + `pytest` to run the offline suite

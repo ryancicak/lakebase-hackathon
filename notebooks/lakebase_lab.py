@@ -22,8 +22,8 @@
 # MAGIC 3. **Recovered** data after an accidental delete (point-in-time recovery).
 # MAGIC 4. Learned how to operate it and what it costs.
 # MAGIC
-# MAGIC > Runs on Databricks serverless. Uses `databricks-sdk>=0.81.0`, `psycopg[binary]>=3.0`,
-# MAGIC > and `sqlalchemy>=2.0` (installed in the next cell).
+# MAGIC > Runs on Databricks serverless. Uses `databricks-sdk>=0.81.0`, `psycopg>=3.0`,
+# MAGIC > and `sqlalchemy>=2.0` (installed in the next cell), plus the `libpq` client library.
 
 # COMMAND ----------
 
@@ -74,7 +74,68 @@
 
 # COMMAND ----------
 
-# MAGIC %pip install -U "databricks-sdk>=0.81.0" "psycopg[binary]>=3.0" "sqlalchemy>=2.0" "pyway"
+# MAGIC %pip install -U "databricks-sdk>=0.81.0" "psycopg>=3.0" "sqlalchemy>=2.0" "pyway"
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ### Then, add the Postgres client library (`libpq`)
+# MAGIC
+# MAGIC `psycopg` talks to Postgres through **libpq**, the official Postgres client library. The
+# MAGIC all-in-one `psycopg[binary]` package bundles libpq with its own copy of OpenSSL, and on some
+# MAGIC serverless machines that copy fails a security self-test (FIPS) and stops Python. So this
+# MAGIC cell downloads the official `libpq5` package for this machine from the
+# MAGIC [PostgreSQL project's own package repository](https://apt.postgresql.org) and unpacks it
+# MAGIC onto local disk (no admin rights needed); it uses the machine's own OpenSSL. Look for the
+# MAGIC libpq version and folder at the end.
+
+# COMMAND ----------
+
+# DBTITLE 1,Download the Postgres client library (libpq)
+"""Download the official libpq5 package for this machine and unpack it locally, for psycopg.
+
+The package index at apt.postgresql.org lists the right file for this machine's Ubuntu release
+and CPU type. ``dpkg-deb -x`` unpacks it into a temp folder; nothing is installed system-wide.
+"""
+
+import gzip
+import platform
+import subprocess
+import tempfile
+import urllib.request
+from pathlib import Path
+
+os_release = dict(
+    line.strip().split("=", 1) for line in open("/etc/os-release") if "=" in line
+)
+codename = os_release["VERSION_CODENAME"].strip('"')  # e.g. "noble" (Ubuntu 24.04)
+arch = {"x86_64": "amd64", "aarch64": "arm64"}[platform.machine()]
+repo = "https://apt.postgresql.org/pub/repos/apt"
+
+# The package index lists the file for every package; find libpq5's.
+index = gzip.decompress(
+    urllib.request.urlopen(
+        f"{repo}/dists/{codename}-pgdg/main/binary-{arch}/Packages.gz", timeout=60
+    ).read()
+).decode()
+filename = None
+for block in index.split("\n\n"):
+    fields = dict(
+        l.split(": ", 1)
+        for l in block.splitlines()
+        if ": " in l and not l.startswith(" ")
+    )
+    if fields.get("Package") == "libpq5":
+        filename = fields["Filename"]
+if filename is None:
+    raise RuntimeError(f"libpq5 not found for {codename}/{arch} at {repo}")
+
+libpq_root = Path(tempfile.mkdtemp(prefix="libpq-"))  # a fresh folder for this session
+deb = libpq_root / Path(filename).name
+urllib.request.urlretrieve(f"{repo}/{filename}", deb)
+subprocess.run(["dpkg-deb", "-x", str(deb), str(libpq_root)], check=True)
+LIBPQ = next(libpq_root.glob("usr/lib/*-linux-gnu/libpq.so.5"))
+print("libpq:", LIBPQ.resolve().name, "in", LIBPQ.parent)
 
 # COMMAND ----------
 
@@ -93,14 +154,28 @@
 
 - ``WorkspaceClient`` is our remote control for Lakebase (create projects, branches,
   endpoints, and mint login tokens).
-- ``psycopg`` is a standard PostgreSQL driver — the same one you would use anywhere.
+- ``psycopg`` is a standard PostgreSQL driver — the same one you would use anywhere. Here it
+  runs in its pure-Python mode on the ``libpq`` downloaded in the previous cell.
 - The ``lakebase_conn`` helpers power the token-refresh demo later in Module 1.
 """
 
+import ctypes.util
+import os
 import time
 from pathlib import Path
 
-import psycopg
+# psycopg finds libpq by asking ctypes for "pq". Point that one lookup at the copy we unpacked,
+# and use the pure-Python implementation, which has no bundled OpenSSL.
+os.environ["PSYCOPG_IMPL"] = "python"
+_find_library = ctypes.util.find_library
+ctypes.util.find_library = lambda name: (
+    str(LIBPQ) if name == "pq" else _find_library(name)
+)
+try:
+    import psycopg
+finally:
+    ctypes.util.find_library = _find_library  # restore the normal lookup
+
 from databricks.sdk import WorkspaceClient
 from databricks.sdk.service.postgres import (
     Branch,

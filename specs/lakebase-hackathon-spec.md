@@ -48,8 +48,11 @@ The curriculum has **two independent tracks** — pick one; install only its dep
 
 * **Notebook track** (`notebooks/lakebase_lab.py`):
   * **Databricks SDK:** `>= 0.81.0` (`w.postgres` module)
-  * **Python Runtime:** `>= 3.10` with `psycopg[binary]>=3.0` and `sqlalchemy>=2.0`
-    (already provided by the Databricks serverless notebook runtime)
+  * **Python Runtime:** `>= 3.10` with `psycopg>=3.0` and `sqlalchemy>=2.0`, installed by the
+    notebook's top `%pip` cell. Use plain `psycopg`, not `psycopg[binary]`: the binary wheel's
+    bundled OpenSSL fails a FIPS self-test and aborts the Python process on some serverless
+    machines. psycopg runs in its pure-Python mode on the `libpq` client library, which the
+    notebook downloads from apt.postgresql.org.
 
 * **Testing (§5), either track:** Python `>= 3.10` + `pytest` to run the offline suite.
 
@@ -161,6 +164,8 @@ The notebook opens with an unnumbered **"What is Lakebase?"** overview, then six
 
 * **Intro — What is Lakebase? (architecture in plain English)**
   * *Doc Cell (`# MAGIC %md`):* Explain — without unexplained jargon — that Lakebase is fully-managed PostgreSQL where **storage and compute are separate** and **storage keeps its history** (analogy: version history / undo for the database). From that single idea, explain in plain terms why compute can **scale to zero** when idle, and why **branches** (instant copies) and **point-in-time recovery** are the *same* cheap mechanism — no data is copied and no logs are replayed. Show the resource layout (`Project → Branch → Endpoint`; inside a branch, `Database → Schema`). Link to the Lakebase overview / architecture docs.
+* **Setup (before Module 0)**
+  * *Code:* The top `%pip` cell installs `databricks-sdk`, `psycopg` (plain, not `[binary]`; see §2), `sqlalchemy`, and `pyway`. The next cell, with its own lead-in, downloads the `libpq5` package for the runtime's Ubuntu release and CPU from apt.postgresql.org and unpacks it locally (no admin rights needed). Module 0 then loads psycopg's pure-Python implementation against that `libpq`.
 * **Module 0: Connect to Databricks & Sign In**
   * *Code:* Instantiate `WorkspaceClient()`, read the signed-in identity (`w.current_user.me()`), derive the per-user `PROJECT_ID` (see [§4.3](#43-naming--multi-tenancy)), and define the resource names reused throughout (`PROJECT`, `PROD_BRANCH`, `DATABASE = "nyc_taxi"`).
 * **Module 1: Create a Database & Log In (for absolute beginners)**
